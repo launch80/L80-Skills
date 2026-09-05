@@ -1,0 +1,28 @@
+#!/bin/sh
+# Refuse to push any commit whose author or committer is not the shared
+# launch80 identity. Reads "<local ref> <local sha> <remote ref> <remote sha>"
+# lines from stdin, as git supplies them.
+REQUIRED="team@launch80.com"
+zero=0000000000000000000000000000000000000000
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue   # deleting a ref
+  if [ "$remote_sha" = "$zero" ]; then
+    range="$local_sha --not --remotes=origin"
+  else
+    range="$remote_sha..$local_sha"
+  fi
+  bad=$(git rev-list $range 2>/dev/null | while read -r sha; do
+    ae=$(git log -1 --format=%ae "$sha"); ce=$(git log -1 --format=%ce "$sha")
+    if [ "$ae" != "$REQUIRED" ] || [ "$ce" != "$REQUIRED" ]; then
+      echo "  $(git log -1 --format='%h %an <%ae> / %cn <%ce>' "$sha")"
+    fi
+  done)
+  if [ -n "$bad" ]; then
+    echo "pre-push: $local_ref contains commits not authored/committed by <$REQUIRED>:" >&2
+    echo "$bad" >&2
+    status=1
+  fi
+done
+[ $status -ne 0 ] && echo "pre-push: rewrite those commits (e.g. git commit --amend --reset-author) and retry" >&2
+exit $status

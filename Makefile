@@ -2,7 +2,7 @@ BINARY := bin/L80
 VERSION ?= 0.1.0
 LDFLAGS := -s -w -X github.com/launch80/L80-Skills/internal/cli.Version=$(VERSION)
 
-.PHONY: build install test fmt vet clean
+.PHONY: build install test fmt vet clean hooks
 
 # rm first: on a case-insensitive filesystem (default macOS) an existing
 # bin/l80 keeps its old directory entry when overwritten, so the release
@@ -27,3 +27,11 @@ vet:
 
 clean:
 	rm -rf bin
+
+# Point git at the committed hooks, which refuse commits and pushes that are
+# not authored by the shared launch80 identity (team@launch80.com).
+hooks:
+	git config core.hooksPath .githooks
+	git config user.name launch80
+	git config user.email team@launch80.com
+	@echo "hooks enabled; commits and pushes must use team@launch80.com"

@@ -1,0 +1,12 @@
+#!/bin/sh
+# Enforce the shared launch80 identity on every commit in this repository.
+# Installed via: git config core.hooksPath .githooks   (see Makefile: make hooks)
+REQUIRED="team@launch80.com"
+author=$(git var GIT_AUTHOR_IDENT | sed -E 's/.*<([^>]*)>.*/\1/')
+committer=$(git var GIT_COMMITTER_IDENT | sed -E 's/.*<([^>]*)>.*/\1/')
+if [ "$author" != "$REQUIRED" ] || [ "$committer" != "$REQUIRED" ]; then
+  echo "pre-commit: commits to this repository must use <$REQUIRED>" >&2
+  echo "            author=<$author> committer=<$committer>" >&2
+  echo "            fix: git config user.name launch80 && git config user.email $REQUIRED" >&2
+  exit 1
+fi
