@@ -11,8 +11,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/mgeatz/L80-Skills/internal/api"
-	"github.com/mgeatz/L80-Skills/internal/config"
+	"github.com/launch80/L80-Skills/internal/api"
+	"github.com/launch80/L80-Skills/internal/config"
 )
 
 type env struct {

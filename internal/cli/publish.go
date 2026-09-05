@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/mgeatz/L80-Skills/internal/api"
-	"github.com/mgeatz/L80-Skills/internal/config"
-	"github.com/mgeatz/L80-Skills/internal/output"
+	"github.com/launch80/L80-Skills/internal/api"
+	"github.com/launch80/L80-Skills/internal/config"
+	"github.com/launch80/L80-Skills/internal/output"
 )
 
 // resolveTemplate reconciles the --template flag with the file's own $template.

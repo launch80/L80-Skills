@@ -1,0 +1,72 @@
+# Builds the L80 CLI for the four platforms install.sh knows about and attaches
+# them to a GitHub Release, plus checksums.txt.
+#
+# Trigger: push a tag like v0.1.0. The tag (minus the leading "v") becomes the
+# version baked into the binary via -X internal/cli.Version.
+#
+# Asset names must stay exactly as below — launch80.com/install.sh downloads
+#   https://github.com/launch80/L80-Skills/releases/latest/download/L80_<os>_<arch>.tar.gz
+#   https://github.com/launch80/L80-Skills/releases/latest/download/checksums.txt
+# and expects each tarball to contain a single top-level file named L80.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - { goos: darwin, goarch: arm64 }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: linux,  goarch: amd64 }
+          - { goos: linux,  goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        env:
+          CGO_ENABLED: '0'
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          mkdir -p dist/stage
+          go build -trimpath \
+            -ldflags "-s -w -X github.com/launch80/L80-Skills/internal/cli.Version=${VERSION}" \
+            -o dist/stage/L80 ./cmd/L80
+          tar -C dist/stage -czf "dist/L80_${GOOS}_${GOARCH}.tar.gz" L80
+      - uses: actions/upload-artifact@v4
+        with:
+          name: L80_${{ matrix.goos }}_${{ matrix.goarch }}
+          path: dist/L80_*.tar.gz
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum L80_*.tar.gz > checksums.txt
+          cat checksums.txt
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/L80_*.tar.gz
+            dist/checksums.txt
+          generate_release_notes: true
