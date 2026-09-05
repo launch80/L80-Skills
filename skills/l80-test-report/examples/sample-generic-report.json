@@ -1,0 +1,27 @@
+{
+  "$template": "generic.report.v1",
+  "title": "Decode throughput across three local runtimes",
+  "subtitle": "Single 35B model, one machine, identical prompts",
+  "summary": "We pointed llama.cpp, vLLM and MLX at the same 35B model on one host and measured time-to-first-token and sustained decode rate over a 24-turn session replay.",
+  "metrics": [
+    { "label": "Best decode", "value": "142", "unit": "tok/s", "note": "vLLM, batch 1" },
+    { "label": "Median TTFT", "value": "0.98", "unit": "s" },
+    { "label": "Peak memory", "value": "32.3", "unit": "GB" },
+    { "label": "Turns", "value": "24" }
+  ],
+  "sections": [
+    {
+      "heading": "Method",
+      "body": "Each runtime served the same quantized 35B checkpoint on the same host, with no other load.\n\nWe replayed a recorded 24-turn coding session against each server and recorded per-turn wall time, time-to-first-token, and reported token counts.",
+      "bullets": [
+        "Identical prompts and generation caps across runtimes",
+        "Warm cache: one discarded priming run before measurement",
+        "Server-reported token counts, not estimates"
+      ]
+    },
+    {
+      "heading": "What surprised us",
+      "body": "The spread in time-to-first-token was much wider than the spread in decode rate. Two runtimes within 4% of each other on sustained decode differed by more than 2x on TTFT, which is the number a user actually feels while typing."
+    }
+  ]
+}

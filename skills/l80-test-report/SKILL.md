@@ -1,0 +1,153 @@
+---
+name: l80-test-report
+description: Publish a structured report to launch80 as a shareable web page. Use when the user asks to publish, share, or "put on the web" a set of findings, benchmark results, a status update, or any summary made of metrics and sections — or when they mention launch80 or L80, or ask for a link they can send to someone. Do not use for editing an already-published page, or for pages that need custom HTML, images, or links.
+---
+
+# Publish a report to launch80
+
+You write a JSON file. The `L80` CLI uploads it. The launch80 server validates it
+against a schema and renders the page from a first-party template.
+
+You never write HTML, and you never handle credentials — the CLI does both.
+
+## Steps
+
+1. Pick a template (below). Run `L80 templates list` if you are unsure.
+2. Write the report to a JSON file, e.g. `report.json`.
+3. Run: `L80 publish report.json --template bench.report.v1`
+   (or `--template generic.report.v1`)
+4. Give the user the URL from the `published:` line.
+
+Name the template with `--template` so the command says which layout it is
+producing. You may instead put `"$template": "<id>"` in the JSON — both work.
+If you do both they must agree, or the command fails with
+`E_TEMPLATE_CONFLICT` rather than guessing which you meant.
+
+## Which template
+
+**`bench.report.v1` — an inference benchmark run.** Use this whenever the source
+is a **BetterBench** `results.json`, or any measurement with per-category
+percentiles. This template is shaped around BetterBench's output and is the one
+that renders it correctly.
+
+**`generic.report.v1` — everything else.** Title, summary, a flat metric
+list, and prose sections. Use it for status updates, test results, findings, and
+any benchmark that is not per-category percentile data.
+
+Choosing `generic.report.v1` for a BetterBench run is the single most common
+mistake. It has no table, so p50/p99/1%-low collapse into unrelated flat metrics
+and the distribution — the entire point of the measurement — is lost.
+
+## bench.report.v1
+
+Map a BetterBench `results.json` like this:
+
+| BetterBench | payload |
+|---|---|
+| `env.model`, `env.notes` | `system.model`, `system.notes[]` |
+| `betterbench_version`, `corpus_version`, `config.runs_per_category` | `harness` |
+| weighted combined score | `headline[]` |
+| single-stream rows, per category | `categories[]` |
+| concurrency sweep | `concurrency[]` |
+| prefill sweep | `prefill[]` |
+| `sample_gate` shortfalls | `caveats[]`, and `categories[].undersampled: true` |
+
+```json
+{
+  "$template": "bench.report.v1",
+  "title": "Qwen3-8B on vLLM 0.9.3",
+  "subtitle": "Single 4090, mxfp4, 20 measured passes",
+  "summary": "One paragraph (required, <= 600 chars).",
+  "harness": {
+    "name": "BetterBench", "version": "0.2.3",
+    "corpus_version": "v1", "passes": "20 passes after 2 warmup"
+  },
+  "system": {
+    "model": "Qwen3-8B",
+    "engine": "vLLM 0.9.3",
+    "hardware": "RTX 4090 24GB",
+    "notes": [{ "label": "quant", "value": "mxfp4" }]
+  },
+  "headline": [{ "label": "Combined decode", "value": "142.4", "unit": "t/s" }],
+  "categories": [
+    {
+      "name": "code", "runs": "20",
+      "ttft_p50": "312", "ttft_p99": "498",
+      "decode": "148.2", "decode_iqr": "6.1",
+      "itl_low1": "96.1", "itl_med": "151.0", "itl_high99": "203.4",
+      "prefill": "4210",
+      "undersampled": true
+    }
+  ],
+  "concurrency": [
+    { "level": "8", "aggregate": "612.8", "ttft_p50": "918", "ttft_p99": "1840" }
+  ],
+  "prefill": [{ "depth": "8K", "prefill_tps": "4210", "ttft": "1.94" }],
+  "caveats": ["ITL 99% high on `code` rests on 20 runs; treat the tail as indicative."],
+  "sections": [{ "heading": "Setup", "body": "Plain text." }]
+}
+```
+
+Rules specific to this template:
+
+- **Never invent a number BetterBench did not report.** If a field is absent
+  from the results file, leave it out — the column disappears. Do not average a
+  percentile, and do not fill a gap with a plausible value.
+- **A batched / speculative-decoding stack has no per-token ITL.** Use
+  `update_p50`, `update_p99` and `tok_per_update` instead. Never convert one to
+  the other.
+- **Carry the sample gate through.** Any percentile BetterBench marked `†` gets
+  `"undersampled": true` on its row plus a line in `caveats`.
+- **`--quick` runs are not publishable results.** If the run used quick mode,
+  say so in `caveats` in the first line.
+- There is no `endpoint` field, on purpose. Do not put a LAN URL in `notes`.
+
+## generic.report.v1
+
+```json
+{
+  "$template": "generic.report.v1",
+  "title": "Short page title (required, <= 120 chars)",
+  "subtitle": "Optional one-liner (<= 160 chars)",
+  "summary": "One paragraph of plain text (required, <= 600 chars)",
+  "metrics": [
+    { "label": "Decode", "value": "142", "unit": "tok/s", "note": "optional" }
+  ],
+  "sections": [
+    {
+      "heading": "What we tested",
+      "body": "Plain text. Blank lines start new paragraphs.",
+      "bullets": ["optional", "short items"]
+    }
+  ]
+}
+```
+
+## Rules for both
+
+- Plain text only. No HTML, no markdown, no URLs, no image references. Unknown or
+  unsupported fields are **rejected by the server**, not silently dropped.
+- Every displayed number is a **string** — format it yourself ("1,240", "12.4%").
+- Limits: 64 KB total. `generic.report.v1` — 12 metrics, 10 sections.
+  `bench.report.v1` — 12 categories, 10 concurrency levels, 10 prefill depths,
+  6 headline metrics, 8 caveats.
+- Published pages are public and carry a visible
+  "Self-reported — not verified by launch80" badge. Tell the user this.
+- Pages are immutable. To change something, publish again and share the new URL.
+
+## If the command fails
+
+Read the `error:` code and the `remedy:` line, then act on them.
+
+- `E_SCHEMA_INVALID` — each listed `/path` is the exact field to fix. Fix and retry.
+- `E_TEMPLATE_UNKNOWN` — run `L80 templates list` and use a listed id.
+- `E_TEMPLATE_CONFLICT` — `--template` and the file's `$template` disagree.
+  Decide which is right, change one, retry. Never publish twice to "see which works".
+- `E_TEMPLATE_MISSING` — pass `--template <id>` or add the field.
+- `E_TOKEN_MISSING` / `E_UNAUTHORIZED` — tell the user to check `L80 auth status`.
+  **Never** ask the user to paste a token into the conversation.
+- `E_RATE_LIMITED` / `E_QUOTA_EXCEEDED` — wait for the stated time. Do not retry in a loop.
+- `E_PAYLOAD_TOO_LARGE` — shorten the sections and retry.
+- `E_NETWORK` — run `L80 doctor`, then report the failure to the user.
+
+Never construct the HTTP request yourself. Always go through `L80 publish`.

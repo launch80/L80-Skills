@@ -1,0 +1,111 @@
+{
+  "$template": "bench.report.v1",
+  "title": "Qwen3-8B on vLLM 0.9.3, single 4090",
+  "subtitle": "BetterBench v1 corpus, 20 measured passes after 2 warmup",
+  "summary": "Decode holds 142 t/s weighted across eight categories. The concurrency knee sits at 8 requests, past which aggregate throughput flattens while p99 TTFT nearly doubles. Prefill scales cleanly to 32K and falls off at 64K.",
+  "harness": {
+    "name": "BetterBench",
+    "version": "0.2.3",
+    "corpus_version": "v1",
+    "passes": "20 measured passes after 2 warmup"
+  },
+  "system": {
+    "model": "Qwen3-8B",
+    "engine": "vLLM 0.9.3",
+    "hardware": "RTX 4090 24GB, driver 560.35",
+    "notes": [
+      { "label": "quant", "value": "mxfp4" },
+      { "label": "kv cache", "value": "fp8" },
+      { "label": "tensor parallel", "value": "1" }
+    ]
+  },
+  "headline": [
+    { "label": "Combined decode", "value": "142.4", "unit": "t/s", "note": "weighted across categories" },
+    { "label": "TTFT p50", "value": "304", "unit": "ms" },
+    { "label": "TTFT p99", "value": "512", "unit": "ms" },
+    { "label": "ITL 1% low", "value": "96.1", "unit": "t/s", "note": "the stutter floor" }
+  ],
+  "categories": [
+    {
+      "name": "code",
+      "runs": "20",
+      "ttft_p50": "312",
+      "ttft_p99": "498",
+      "decode": "148.2",
+      "decode_iqr": "6.1",
+      "itl_low1": "96.1",
+      "itl_med": "151.0",
+      "itl_high99": "203.4",
+      "prefill": "4210",
+      "undersampled": true
+    },
+    {
+      "name": "prose",
+      "runs": "20",
+      "ttft_p50": "298",
+      "ttft_p99": "471",
+      "decode": "139.7",
+      "decode_iqr": "4.4",
+      "itl_low1": "101.3",
+      "itl_med": "142.8",
+      "itl_high99": "188.0",
+      "prefill": "3980"
+    },
+    {
+      "name": "reasoning",
+      "runs": "20",
+      "ttft_p50": "341",
+      "ttft_p99": "602",
+      "decode": "136.1",
+      "decode_iqr": "8.9",
+      "itl_low1": "88.4",
+      "itl_med": "138.2",
+      "itl_high99": "191.7",
+      "prefill": "4055",
+      "undersampled": true
+    },
+    {
+      "name": "summarization",
+      "runs": "20",
+      "ttft_p50": "489",
+      "ttft_p99": "744",
+      "decode": "141.9",
+      "decode_iqr": "5.2",
+      "itl_low1": "99.0",
+      "itl_med": "145.6",
+      "itl_high99": "196.2",
+      "prefill": "5120"
+    }
+  ],
+  "concurrency": [
+    { "level": "1", "aggregate": "142.4", "ttft_p50": "304", "ttft_p99": "512", "decode": "142.4" },
+    { "level": "4", "aggregate": "421.6", "ttft_p50": "486", "ttft_p99": "918", "decode": "105.4" },
+    { "level": "8", "aggregate": "612.8", "ttft_p50": "918", "ttft_p99": "1840", "decode": "76.6" },
+    { "level": "16", "aggregate": "634.1", "ttft_p50": "1974", "ttft_p99": "4120", "decode": "39.6" }
+  ],
+  "prefill": [
+    { "depth": "2K", "prefill_tps": "3840", "ttft": "0.52" },
+    { "depth": "8K", "prefill_tps": "4210", "ttft": "1.94" },
+    { "depth": "32K", "prefill_tps": "4165", "ttft": "7.88" },
+    { "depth": "64K", "prefill_tps": "3102", "ttft": "21.14" }
+  ],
+  "caveats": [
+    "ITL 99% high on `code` and `reasoning` rests on 20 runs; BetterBench flagged both as under-sampled. Treat those tails as indicative, not settled.",
+    "Single host, single run. No paired A/B, so a sub-3% difference against another result on different hardware is not meaningful."
+  ],
+  "sections": [
+    {
+      "heading": "Setup",
+      "body": "One RTX 4090 on an otherwise idle host, vLLM 0.9.3 in the official container, mxfp4 weights with an fp8 KV cache.\n\nThe BetterBench v1 corpus was used unmodified. Nonce prefixes were left on, so prefill numbers reflect a cold prefix cache rather than accidental cache hits."
+    },
+    {
+      "heading": "Reading the concurrency table",
+      "body": "Aggregate throughput gains almost nothing between 8 and 16 concurrent requests, while p99 TTFT more than doubles. For an interactive workload the useful ceiling on this box is 8.",
+      "bullets": [
+        "1 to 4: near-linear aggregate gain, modest latency cost",
+        "4 to 8: 45% more aggregate throughput, p99 TTFT doubles",
+        "8 to 16: 3% more throughput, p99 TTFT doubles again"
+      ]
+    }
+  ]
+}
