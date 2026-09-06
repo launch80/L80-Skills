@@ -57,6 +57,20 @@ fields never leave the machine: `env.endpoint` and `env.host`; the server
 refuses a file that still carries them. Flags after `--` are passed to
 `betterbench run` untouched.
 
+## History
+
+```sh
+L80 history                 # newest first: time, template, URL, title
+L80 history --all --json    # every artifact this key ever published, as JSON
+L80 history --local         # only what this machine published, with the source file of each
+```
+
+The server is the source of truth: it lists every artifact published with the
+configured key from any machine. Each successful publish is also appended to
+`~/.config/L80/history.jsonl` (mode 0600), which is what `history` shows when
+there is no token or no network, and the only record of which file each page
+came from.
+
 ## Update
 
 ```sh
@@ -94,6 +108,7 @@ L80 betterbench --results <results.json>       Publish an existing results.json
 L80 templates list [--json]                    List available templates
 L80 skills print [name]                        Print a bundled SKILL.md
 L80 skills link --target claude-code [--dev]   Install a skill for an agent
+L80 history [--limit N] [--json] [--local]     List the share URLs this key has published
 L80 auth status                                Show the resolved endpoint and key
 L80 doctor                                     Check connectivity and config
 L80 update [--check] [--json]                  Install the latest release in place

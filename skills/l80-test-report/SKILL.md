@@ -196,4 +196,8 @@ Read the `error:` code and the `remedy:` line, then act on them.
 - Any error whose remedy seems wrong for the situation, or a code this list does
   not mention — the CLI may be out of date. Run `L80 update`, then retry once.
 
+To find a page published earlier, run `L80 history` (newest first; `--all`
+for everything, `--json` for machine-readable output). Never ask the user to
+dig the URL out of scrollback.
+
 Never construct the HTTP request yourself. Always go through `L80 publish`.

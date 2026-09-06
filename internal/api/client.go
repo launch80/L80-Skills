@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"runtime"
 	"time"
 )
@@ -83,6 +84,39 @@ type Health struct {
 func (c *Client) Publish(payload []byte) (*Artifact, *Error) {
 	var out Artifact
 	if err := c.do(http.MethodPost, "/api/v1/artifacts", payload, true, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// HistoryPage is the server's listing of artifacts published under the
+// caller's key, newest first.
+type HistoryPage struct {
+	KeyID      string         `json:"key_id"`
+	Artifacts  []HistoryEntry `json:"artifacts"`
+	NextBefore *string        `json:"next_before"`
+}
+
+type HistoryEntry struct {
+	GUID            string `json:"guid"`
+	URL             string `json:"url"`
+	TemplateID      string `json:"template_id"`
+	TemplateVersion int    `json:"template_version"`
+	TrustTier       string `json:"trust_tier"`
+	Title           string `json:"title"`
+	ByteSize        int    `json:"byte_size"`
+	CreatedAt       string `json:"created_at"`
+}
+
+// History lists what this key has published. `before` pages backwards from a
+// created_at timestamp; empty means the newest page.
+func (c *Client) History(limit int, before string) (*HistoryPage, *Error) {
+	path := fmt.Sprintf("/api/v1/artifacts?limit=%d", limit)
+	if before != "" {
+		path += "&before=" + url.QueryEscape(before)
+	}
+	var out HistoryPage
+	if err := c.do(http.MethodGet, path, nil, true, &out); err != nil {
 		return nil, err
 	}
 	return &out, nil

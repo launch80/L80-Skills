@@ -10,6 +10,7 @@ import (
 	"github.com/launch80/L80-Skills/internal/api"
 	"github.com/launch80/L80-Skills/internal/betterbench"
 	"github.com/launch80/L80-Skills/internal/config"
+	"github.com/launch80/L80-Skills/internal/history"
 	"github.com/launch80/L80-Skills/internal/output"
 )
 
@@ -224,6 +225,17 @@ func publishBody(e env, body []byte, template, path, apiBase string, asJSON bool
 		return fail(e, apiErr)
 	}
 
+	// Best effort: a failure to write the local record must not turn a
+	// successful publish into an error exit. The URL is still printed.
+	if err := history.Append(history.Entry{
+		GUID: artifact.GUID, URL: artifact.URL, TemplateID: artifact.TemplateID,
+		TemplateVersion: artifact.TemplateVersion, Title: titleOfBody(body, template),
+		ByteSize: artifact.ByteSize, CreatedAt: artifact.CreatedAt,
+		SourcePath: path, APIBase: cfg.BaseURL,
+	}); err != nil {
+		output.Detailf(e.stderr, "note: could not record this publish in %s: %v", history.Path(), err)
+	}
+
 	if asJSON {
 		return emitJSON(e, artifact)
 	}
@@ -232,8 +244,37 @@ func publishBody(e env, body []byte, template, path, apiBase string, asJSON bool
 	output.Successf(e.stdout, "published: %s", artifact.URL)
 	output.Detailf(e.stdout, "template %s v%d · %s · %d bytes",
 		artifact.TemplateID, artifact.TemplateVersion, artifact.TrustTier, artifact.ByteSize)
-	_ = path
 	return api.ExitOK
+}
+
+// titleOfBody mirrors the server's titleOf for each template, so the local
+// record shows the same title the page carries.
+func titleOfBody(body []byte, template string) string {
+	var fields struct {
+		Title string `json:"title"`
+		L80   struct {
+			Title string `json:"title"`
+		} `json:"l80"`
+		Env struct {
+			Model string            `json:"model"`
+			Notes map[string]string `json:"notes"`
+		} `json:"env"`
+	}
+	if json.Unmarshal(body, &fields) != nil {
+		return ""
+	}
+	if template != betterbench.RawTemplateID {
+		return fields.Title
+	}
+	if fields.L80.Title != "" {
+		return fields.L80.Title
+	}
+	for _, k := range []string{"engine", "server", "image"} {
+		if v := fields.Env.Notes[k]; v != "" {
+			return fields.Env.Model + " on " + v
+		}
+	}
+	return fields.Env.Model
 }
 
 func emitJSON(e env, v any) int {
