@@ -52,6 +52,12 @@ Map a BetterBench `results.json` like this:
 | prefill sweep | `prefill[]` |
 | `sample_gate` shortfalls | `caveats[]`, and `categories[].undersampled: true` |
 
+**Publish the mapped payload, never `results.json` itself.** Write the mapped
+object to a new file and pass that to `L80 publish`. The raw harness output is
+not a template payload: it fails the schema, and it is usually far over the
+64 KB limit, so `E_PAYLOAD_TOO_LARGE` or `E_INPUT_NOT_TEMPLATE` on a file you
+did not write is the sign this mapping step was skipped.
+
 ```json
 {
   "$template": "bench.report.v1",
@@ -147,7 +153,11 @@ Read the `error:` code and the `remedy:` line, then act on them.
 - `E_TOKEN_MISSING` / `E_UNAUTHORIZED` — tell the user to check `L80 auth status`.
   **Never** ask the user to paste a token into the conversation.
 - `E_RATE_LIMITED` / `E_QUOTA_EXCEEDED` — wait for the stated time. Do not retry in a loop.
-- `E_PAYLOAD_TOO_LARGE` — shorten the sections and retry.
+- `E_INPUT_NOT_TEMPLATE` — the file is raw harness output (e.g. a BetterBench
+  `results.json`), not a mapped payload. Do the mapping above and publish the result.
+- `E_PAYLOAD_TOO_LARGE` — a valid payload never exceeds the limit by much, so first
+  confirm the file is a mapped payload and not harness output. If it is, shorten
+  the sections and retry.
 - `E_NETWORK` — run `L80 doctor`, then report the failure to the user.
 
 Never construct the HTTP request yourself. Always go through `L80 publish`.

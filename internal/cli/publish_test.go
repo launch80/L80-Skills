@@ -139,3 +139,49 @@ func TestNonStringFieldFallsThroughToTheFlag(t *testing.T) {
 		t.Errorf("flag should have been written in: %s", body)
 	}
 }
+
+// The body is always sent compact so the 64 KB limit means the same thing
+// however the file was indented. Values must still come through byte-for-byte.
+func TestPassThroughIsCompactedWithoutRewritingValues(t *testing.T) {
+	in := []byte("{\n  \"$template\": \"bench.report.v1\",\n  \"title\": \"x\",\n  \"big\": 1234567890123456789,\n  \"s\": \"a  b\\n\"\n}\n")
+	_, body, err := resolveTemplate(in, "", "report.json")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := `{"$template":"bench.report.v1","title":"x","big":1234567890123456789,"s":"a  b\n"}`
+	if string(body) != want {
+		t.Fatalf("body = %s\nwant %s", body, want)
+	}
+	// Same when the flag merely agrees with the field.
+	_, body2, err := resolveTemplate(in, "bench.report.v1", "report.json")
+	if err != nil || string(body2) != want {
+		t.Fatalf("matching-flag body = %s err=%v", body2, err)
+	}
+}
+
+// A raw BetterBench results.json has none of the fields every template requires
+// and several the harness writes. Pointing `L80 publish` at it must produce a
+// dedicated error, before the size check, whatever the --template flag says.
+func TestHarnessDumpIsRefusedBeforeAnythingElse(t *testing.T) {
+	dump := []byte(`{"betterbench_version":"0.2.3","corpus_version":"1","env":{"model":"m"},"config":{"runs_per_category":20},"sample_gate":{},"results":{}}`)
+	for _, flag := range []string{"", "bench.report.v1"} {
+		_, _, err := resolveTemplate(dump, flag, "spec7_quick_0904.json")
+		if err == nil || err.Code != "E_INPUT_NOT_TEMPLATE" {
+			t.Fatalf("flag=%q: expected E_INPUT_NOT_TEMPLATE, got %v", flag, err)
+		}
+		if !strings.Contains(err.Message, "spec7_quick_0904.json") || !strings.Contains(err.Remedy, "results.json") {
+			t.Errorf("flag=%q: message/remedy should name the file and results.json: %q / %q", flag, err.Message, err.Remedy)
+		}
+	}
+}
+
+// A mapped payload that happens to carry a harness-looking key (e.g. a
+// publisher who kept "config") is NOT a dump once title/summary are present;
+// the server's schema is what rejects the stray key, with a JSON Pointer.
+func TestMappedPayloadWithStrayHarnessKeyIsNotTreatedAsDump(t *testing.T) {
+	in := []byte(`{"title":"x","summary":"y","system":{"model":"m"},"config":{}}`)
+	got, _, err := resolveTemplate(in, "bench.report.v1", "report.json")
+	if err != nil || got != "bench.report.v1" {
+		t.Fatalf("got %q err=%v", got, err)
+	}
+}

@@ -8,19 +8,20 @@ import (
 
 func TestExitCodeForMapsServerCodes(t *testing.T) {
 	cases := map[string]int{
-		"E_SCHEMA_INVALID":    ExitValidation,
-		"E_PAYLOAD_UNSAFE":    ExitValidation,
-		"E_JSON_INVALID":      ExitValidation,
-		"E_TOKEN_MISSING":     ExitAuth,
-		"E_UNAUTHORIZED":      ExitAuth,
-		"E_RATE_LIMITED":      ExitRateLimited,
-		"E_QUOTA_EXCEEDED":    ExitRateLimited,
-		"E_PAYLOAD_TOO_LARGE": ExitPayloadTooBig,
-		"E_TEMPLATE_UNKNOWN":  ExitUnknownTemplate,
-		"E_TEMPLATE_MISSING":  ExitUnknownTemplate,
-		"E_NETWORK":           ExitNetwork,
-		"E_USAGE":             ExitUsage,
-		"E_INPUT_INVALID":     ExitInputInvalid,
+		"E_SCHEMA_INVALID":     ExitValidation,
+		"E_PAYLOAD_UNSAFE":     ExitValidation,
+		"E_JSON_INVALID":       ExitValidation,
+		"E_TOKEN_MISSING":      ExitAuth,
+		"E_UNAUTHORIZED":       ExitAuth,
+		"E_RATE_LIMITED":       ExitRateLimited,
+		"E_QUOTA_EXCEEDED":     ExitRateLimited,
+		"E_PAYLOAD_TOO_LARGE":  ExitPayloadTooBig,
+		"E_TEMPLATE_UNKNOWN":   ExitUnknownTemplate,
+		"E_TEMPLATE_MISSING":   ExitUnknownTemplate,
+		"E_NETWORK":            ExitNetwork,
+		"E_USAGE":              ExitUsage,
+		"E_INPUT_INVALID":      ExitInputInvalid,
+		"E_INPUT_NOT_TEMPLATE": ExitInputInvalid,
 	}
 	for code, want := range cases {
 		if got := ExitCodeFor(code); got != want {

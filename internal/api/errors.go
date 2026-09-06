@@ -68,7 +68,7 @@ func ExitCodeFor(code string) int {
 		return ExitUsage
 	case "E_NETWORK":
 		return ExitNetwork
-	case "E_INPUT_INVALID":
+	case "E_INPUT_INVALID", "E_INPUT_NOT_TEMPLATE":
 		return ExitInputInvalid
 	case "E_USAGE":
 		return ExitUsage

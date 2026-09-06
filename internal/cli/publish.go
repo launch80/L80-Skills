@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -10,6 +11,42 @@ import (
 	"github.com/launch80/L80-Skills/internal/config"
 	"github.com/launch80/L80-Skills/internal/output"
 )
+
+// harnessDumpKeys are top-level fields of a BetterBench results.json. None of
+// them exists in any template, so their presence, together with the absence of
+// the fields every template requires, means the caller pointed `L80 publish` at
+// the harness output instead of at a payload mapped from it. That file is
+// usually far over the size cap, and "shorten the sections" is the wrong advice
+// for a file that has no sections.
+var harnessDumpKeys = []string{"betterbench_version", "env", "sample_gate", "results", "config"}
+
+// templateRequiredKeys are required by every template; a mapped payload has them.
+var templateRequiredKeys = []string{"title", "summary"}
+
+func looksLikeHarnessDump(fields map[string]json.RawMessage) bool {
+	for _, k := range templateRequiredKeys {
+		if _, ok := fields[k]; ok {
+			return false
+		}
+	}
+	for _, k := range harnessDumpKeys {
+		if _, ok := fields[k]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// compact strips insignificant whitespace so the size limit means the same
+// thing however the file was formatted. json.Compact copies value bytes
+// verbatim, so numbers and strings come through exactly as written.
+func compact(data []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, data); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
 
 // resolveTemplate reconciles the --template flag with the file's own $template.
 //
@@ -22,8 +59,9 @@ import (
 //	both, and they differ -> refuse, naming each source
 //	neither               -> refuse, naming both ways to set it
 //
-// Returns the resolved id and the body to send, which is the caller's original
-// bytes untouched unless an injection was actually required.
+// Returns the resolved id and the body to send. The body is the caller's JSON
+// with insignificant whitespace removed; values are never rewritten, and the
+// object is only re-encoded when an injection was actually required.
 func resolveTemplate(data []byte, flagValue, path string) (string, []byte, *api.Error) {
 	// json.RawMessage, not `any`: decoding into `any` turns every number into a
 	// float64, and re-encoding would then rewrite the caller's values — a large
@@ -35,6 +73,14 @@ func resolveTemplate(data []byte, flagValue, path string) (string, []byte, *api.
 		return "", nil, api.Newf("E_JSON_INVALID",
 			"Fix the JSON syntax and retry.",
 			"%s is not valid JSON: %v", path, err)
+	}
+
+	if looksLikeHarnessDump(fields) {
+		return "", nil, api.Newf("E_INPUT_NOT_TEMPLATE",
+			"Map the harness output into a template payload first (see the l80-test-report skill's "+
+				"bench.report.v1 mapping table), then publish that file. Never pass results.json itself.",
+			"%s looks like raw BetterBench output, not a template payload: it has no title/summary "+
+				"but does have harness fields", path)
 	}
 
 	fromFile := ""
@@ -51,7 +97,12 @@ func resolveTemplate(data []byte, flagValue, path string) (string, []byte, *api.
 			"%s has no $template field and no --template flag was given", path)
 
 	case flagValue == "":
-		return fromFile, data, nil
+		body, err := compact(data)
+		if err != nil {
+			return "", nil, api.Newf("E_INTERNAL", "Retry once.",
+				"could not compact %s: %v", path, err)
+		}
+		return fromFile, body, nil
 
 	case fromFile == "":
 		quoted, err := json.Marshal(flagValue)
@@ -73,7 +124,12 @@ func resolveTemplate(data []byte, flagValue, path string) (string, []byte, *api.
 			"--template says %q but %s already declares %q", flagValue, path, fromFile)
 
 	default:
-		return flagValue, data, nil
+		body, err := compact(data)
+		if err != nil {
+			return "", nil, api.Newf("E_INTERNAL", "Retry once.",
+				"could not compact %s: %v", path, err)
+		}
+		return flagValue, body, nil
 	}
 }
 
@@ -110,11 +166,13 @@ func runPublish(e env, args []string) int {
 		return fail(e, tmplErr)
 	}
 
-	// Checked after resolution, because injecting the id makes the body longer.
+	// Checked after resolution: injecting the id makes the body longer, and
+	// compaction makes it shorter. Measured on exactly the bytes that are sent.
 	if len(body) > api.MaxPayloadBytes {
 		return fail(e, api.Newf("E_PAYLOAD_TOO_LARGE",
-			"Shorten the sections and retry.",
-			"%s is %d bytes; the limit is %d", path, len(body), api.MaxPayloadBytes))
+			"Shorten the sections and retry. A file far over the limit is usually not a template "+
+				"payload at all but raw harness output; map it into the template first.",
+			"%s is %d bytes after removing whitespace; the limit is %d", path, len(body), api.MaxPayloadBytes))
 	}
 
 	if *dryRun {
