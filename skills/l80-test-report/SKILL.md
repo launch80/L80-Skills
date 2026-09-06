@@ -40,7 +40,25 @@ and the distribution — the entire point of the measurement — is lost.
 
 ## bench.report.v1
 
-Map a BetterBench `results.json` like this:
+**Use `L80 betterbench` to do the mapping. Do not hand-write it.**
+
+```sh
+L80 betterbench results.json                       # -> results.l80.json, then review
+L80 publish results.l80.json
+# or, in one step:
+L80 betterbench results.json --publish
+```
+
+The command ports BetterBench's own statistics, applies its sample gate, keeps
+per-token ITL only where the server streamed one token per update, fills
+`caveats` (quick mode, under-sampled percentiles, truncation, failed requests,
+skipped prefill depths), and never copies the endpoint or hostname. Add
+`--title`, `--summary`, `--engine`, `--hardware`, or `--section "Heading=Body"`
+when the user wants something the file cannot know; every default is derived
+from the file. Read the caveats it prints and repeat them to the user.
+
+Write a payload by hand only when the source is not a BetterBench file. In
+that case the mapping is:
 
 | BetterBench | payload |
 |---|---|
@@ -52,11 +70,10 @@ Map a BetterBench `results.json` like this:
 | prefill sweep | `prefill[]` |
 | `sample_gate` shortfalls | `caveats[]`, and `categories[].undersampled: true` |
 
-**Publish the mapped payload, never `results.json` itself.** Write the mapped
-object to a new file and pass that to `L80 publish`. The raw harness output is
-not a template payload: it fails the schema, and it is usually far over the
-64 KB limit, so `E_PAYLOAD_TOO_LARGE` or `E_INPUT_NOT_TEMPLATE` on a file you
-did not write is the sign this mapping step was skipped.
+**Publish the mapped payload, never `results.json` itself.** The raw harness
+output is not a template payload: it fails the schema, and it is usually far
+over the 64 KB limit, so `E_PAYLOAD_TOO_LARGE` or `E_INPUT_NOT_TEMPLATE` on a
+file you did not write is the sign `L80 betterbench` was skipped.
 
 ```json
 {
@@ -154,7 +171,8 @@ Read the `error:` code and the `remedy:` line, then act on them.
   **Never** ask the user to paste a token into the conversation.
 - `E_RATE_LIMITED` / `E_QUOTA_EXCEEDED` — wait for the stated time. Do not retry in a loop.
 - `E_INPUT_NOT_TEMPLATE` — the file is raw harness output (e.g. a BetterBench
-  `results.json`), not a mapped payload. Do the mapping above and publish the result.
+  `results.json`), not a mapped payload. Run `L80 betterbench <file>` and publish
+  the file it writes.
 - `E_PAYLOAD_TOO_LARGE` — a valid payload never exceeds the limit by much, so first
   confirm the file is a mapped payload and not harness output. If it is, shorten
   the sections and retry.

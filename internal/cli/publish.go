@@ -77,8 +77,8 @@ func resolveTemplate(data []byte, flagValue, path string) (string, []byte, *api.
 
 	if looksLikeHarnessDump(fields) {
 		return "", nil, api.Newf("E_INPUT_NOT_TEMPLATE",
-			"Map the harness output into a template payload first (see the l80-test-report skill's "+
-				"bench.report.v1 mapping table), then publish that file. Never pass results.json itself.",
+			"Run `L80 betterbench <results.json>` to map it into a bench.report.v1 payload, then publish "+
+				"the file it writes (or add --publish to do both). Never pass results.json itself.",
 			"%s looks like raw BetterBench output, not a template payload: it has no title/summary "+
 				"but does have harness fields", path)
 	}
@@ -171,7 +171,7 @@ func runPublish(e env, args []string) int {
 	if len(body) > api.MaxPayloadBytes {
 		return fail(e, api.Newf("E_PAYLOAD_TOO_LARGE",
 			"Shorten the sections and retry. A file far over the limit is usually not a template "+
-				"payload at all but raw harness output; map it into the template first.",
+				"payload at all but raw harness output; run `L80 betterbench <results.json>` instead.",
 			"%s is %d bytes after removing whitespace; the limit is %d", path, len(body), api.MaxPayloadBytes))
 	}
 
