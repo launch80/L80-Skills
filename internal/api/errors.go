@@ -74,6 +74,8 @@ func ExitCodeFor(code string) int {
 		return ExitUsage
 	case "E_NOT_FOUND", "E_INTERNAL":
 		return ExitServer
+	case "E_UPDATE_FAILED":
+		return ExitInternal
 	default:
 		return ExitInternal
 	}

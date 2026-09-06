@@ -21,6 +21,7 @@ func TestExitCodeForMapsServerCodes(t *testing.T) {
 		"E_NETWORK":            ExitNetwork,
 		"E_USAGE":              ExitUsage,
 		"E_INPUT_INVALID":      ExitInputInvalid,
+		"E_UPDATE_FAILED":      ExitInternal,
 		"E_INPUT_NOT_TEMPLATE": ExitInputInvalid,
 	}
 	for code, want := range cases {

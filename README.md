@@ -34,6 +34,17 @@ L80 skills link --target claude-code --dev \
   --from ./skills                              # symlink, so edits are live
 ```
 
+## Update
+
+```sh
+L80 update            # download the latest release, verify its checksum, replace the binary in place
+L80 update --check    # only report whether a newer release exists
+```
+
+Prebuilt releases exist for macOS and Linux on amd64 and arm64. Elsewhere,
+pull and `make install`. Re-running the install script
+(`curl -fsSL https://launch80.com/install.sh | sh`) is equivalent to `L80 update`.
+
 ## Configuration
 
 | Variable | Meaning |
@@ -60,6 +71,7 @@ L80 skills print [name]                        Print a bundled SKILL.md
 L80 skills link --target claude-code [--dev]   Install a skill for an agent
 L80 auth status                                Show the resolved endpoint and key
 L80 doctor                                     Check connectivity and config
+L80 update [--check] [--json]                  Install the latest release in place
 L80 version
 ```
 

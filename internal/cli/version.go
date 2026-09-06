@@ -6,7 +6,7 @@ import (
 )
 
 // Version is overridden at build time via -ldflags.
-var Version = "0.1.1"
+var Version = "0.1.2"
 
 func VersionLine() string {
 	return fmt.Sprintf("L80 %s (%s %s/%s)", Version, runtime.Version(), runtime.GOOS, runtime.GOARCH)

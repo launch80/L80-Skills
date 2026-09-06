@@ -159,5 +159,7 @@ Read the `error:` code and the `remedy:` line, then act on them.
   confirm the file is a mapped payload and not harness output. If it is, shorten
   the sections and retry.
 - `E_NETWORK` — run `L80 doctor`, then report the failure to the user.
+- Any error whose remedy seems wrong for the situation, or a code this list does
+  not mention — the CLI may be out of date. Run `L80 update`, then retry once.
 
 Never construct the HTTP request yourself. Always go through `L80 publish`.

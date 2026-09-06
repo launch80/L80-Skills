@@ -40,6 +40,8 @@ func Run(args []string) int {
 		return runAuth(e, args[2:])
 	case "doctor":
 		return runDoctor(e, args[2:])
+	case "update":
+		return runUpdate(e, args[2:])
 	case "version", "--version", "-v":
 		fmt.Fprintln(e.stdout, VersionLine())
 		return api.ExitOK
@@ -82,6 +84,7 @@ Usage:
   L80 skills link --target claude-code [--dev]   Install a skill for an agent
   L80 auth status                                Show the resolved endpoint and key
   L80 doctor                                     Check connectivity and config
+  L80 update [--check] [--json]                  Install the latest release in place
   L80 version                                    Print the version
 
 Environment:
