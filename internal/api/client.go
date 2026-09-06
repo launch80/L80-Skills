@@ -16,7 +16,7 @@ const MaxPayloadBytes = 65536
 
 // rawResultsMaxBytes mirrors the server's raised limit for
 // bench.betterbench.v1, which stores a harness's results file as written.
-const rawResultsMaxBytes = 2 * 1024 * 1024
+const rawResultsMaxBytes = 4 * 1024 * 1024
 
 // MaxPayloadBytesFor is the client-side limit for a template. The server is
 // the authority; this only lets the CLI fail fast with the right number.

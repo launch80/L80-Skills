@@ -16,7 +16,7 @@ import (
 const RawTemplateID = "bench.betterbench.v1"
 
 // RawMaxPayloadBytes mirrors the server's limit for RawTemplateID.
-const RawMaxPayloadBytes = 2 * 1024 * 1024
+const RawMaxPayloadBytes = 4 * 1024 * 1024
 
 // UpstreamRepo is where BetterBench lives; used to bootstrap it through uvx
 // when it is not installed.
