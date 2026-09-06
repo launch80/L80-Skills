@@ -1,13 +1,16 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/launch80/L80-Skills/internal/api"
 	"github.com/launch80/L80-Skills/internal/betterbench"
@@ -20,151 +23,251 @@ type multiFlag []string
 func (m *multiFlag) String() string     { return strings.Join(*m, ", ") }
 func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
-// defaultPayloadPath is <results>.l80.json beside the input, so the mapped
-// file is easy to find and never overwrites the results it came from.
-func defaultPayloadPath(results string) string {
-	base := strings.TrimSuffix(results, filepath.Ext(results))
-	return base + ".l80.json"
+// phaseFlags records which phase flags were given, in order.
+type phaseFlags struct{ list []string }
+
+func (p *phaseFlags) flag(fs *flag.FlagSet, name, help string) {
+	fs.BoolFunc(name, help, func(string) error { p.list = append(p.list, name); return nil })
+}
+
+// defaultResultsPath is where a run's results.json goes when --out is not
+// given: the working directory, named after the model and the minute, so a
+// series of runs never overwrite each other and the file is easy to find.
+func defaultResultsPath(model string, now time.Time) string {
+	safe := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-':
+			return r
+		default:
+			return '_'
+		}
+	}, model)
+	return fmt.Sprintf("betterbench-%s-%s.json", safe, now.Format("20060102-1504"))
 }
 
 func runBetterbench(e env, args []string) int {
 	fs := flag.NewFlagSet("betterbench", flag.ContinueOnError)
 	fs.SetOutput(e.stderr)
+	fs.Usage = func() { betterbenchUsage(e) }
 	apiBase, asJSON := addCommonFlags(fs)
-	out := fs.String("out", "", "where to write the payload (default <results>.l80.json; \"-\" for stdout)")
-	title := fs.String("title", "", "page title (default \"<model> on <engine>\")")
-	subtitle := fs.String("subtitle", "", "one-line subtitle (default: hardware, passes, sampling)")
-	summary := fs.String("summary", "", "summary paragraph (default: generated from the measured figures)")
-	engine := fs.String("engine", "", "serving stack, e.g. \"vLLM 0.9.3\" (default: the engine/server/image --note)")
-	hardware := fs.String("hardware", "", "the box, e.g. \"RTX 4090 24GB\" (default: from nvidia-smi/rocm-smi in the file)")
+
+	// Running the benchmark.
+	endpoint := fs.String("endpoint", "", "OpenAI-compatible base URL to benchmark, e.g. http://host:8080/v1")
+	model := fs.String("model", "", "model name to request")
+	quick := fs.Bool("quick", false, "short smoke run (BetterBench --quick); the page will say so")
+	passes := fs.Int("passes", 0, "measured passes per category (default: BetterBench's 20)")
+	warmup := fs.Int("warmup", -1, "warmup passes per category (default: BetterBench's)")
+	var notes multiFlag
+	fs.Var(&notes, "note", "KEY=VALUE recorded in the run and shown as a chip; repeatable")
+	var phases phaseFlags
+	phases.flag(fs, "decode", "run the single-stream phase (combinable with --prefill/--concurrency)")
+	phases.flag(fs, "prefill", "run the prefill sweep")
+	phases.flag(fs, "concurrency", "run the concurrency sweep")
+	noPrefill := fs.Bool("no-prefill", false, "skip the prefill sweep")
+	noConcurrency := fs.Bool("no-concurrency", false, "skip the concurrency sweep")
+	out := fs.String("out", "", "where betterbench writes results.json (default ./betterbench-<model>-<time>.json)")
+
+	// Publishing an existing file instead.
+	results := fs.String("results", "", "publish this existing results.json instead of running a benchmark")
+
+	// What to publish.
+	tmpl := fs.String("template", betterbench.RawTemplateID,
+		"bench.betterbench.v1 publishes the results file as written; bench.report.v1 maps it to the summary template")
+	title := fs.String("title", "", "page title (default: model, plus the engine note if any)")
+	summary := fs.String("summary", "", "summary paragraph shown under the title")
 	var sections multiFlag
 	fs.Var(&sections, "section", "extra prose section as \"Heading=Body\"; repeatable")
-	publish := fs.Bool("publish", false, "publish the payload immediately after writing it")
+	dryRun := fs.Bool("dry-run", false, "run (or read) and prepare the payload, but do not publish")
+	payloadOut := fs.String("payload-out", "", "also write the exact payload that would be published to this path")
 
+	// Mapping-only flags, honoured with --template bench.report.v1.
+	engine := fs.String("engine", "", "serving stack label (bench.report.v1 only)")
+	hardware := fs.String("hardware", "", "hardware label (bench.report.v1 only)")
+
+	// Everything after "--" goes to `betterbench run` verbatim.
+	var extra []string
+	if i := indexOf(args, "--"); i >= 0 {
+		extra, args = args[i+1:], args[:i]
+	}
 	positional, parseErr := parseArgs(fs, args)
 	if parseErr != nil {
 		return api.ExitUsage
 	}
-	if len(positional) != 1 {
-		return fail(e, api.Newf("E_USAGE",
-			"Pass exactly one BetterBench results file, e.g. `L80 betterbench results.json`.",
-			"expected one file argument, got %d", len(positional)))
+	// A bare path is the 0.2.x form `L80 betterbench results.json`; keep it working.
+	if len(positional) == 1 && *results == "" && *endpoint == "" {
+		*results = positional[0]
+		positional = nil
 	}
-	path := positional[0]
-
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return fail(e, api.Newf("E_INPUT_INVALID",
-			"Check the path. It should be the results.json that `betterbench run --out` wrote.",
-			"could not read %s: %v", path, err))
-	}
-	results, err := betterbench.Parse(data)
-	if err != nil {
-		switch {
-		case errors.Is(err, betterbench.ErrAlreadyPayload):
-			return fail(e, api.Newf("E_INPUT_INVALID",
-				fmt.Sprintf("This file is already a template payload. Publish it directly: `L80 publish %s`.", path),
-				"%s is %v", path, err))
-		case errors.Is(err, betterbench.ErrNotBetterBench):
-			return fail(e, api.Newf("E_INPUT_INVALID",
-				"Pass the results.json written by `betterbench run --out`.",
-				"%s is %v", path, err))
-		case errors.Is(err, betterbench.ErrSyntax):
-			return fail(e, api.Newf("E_JSON_INVALID", "Fix the JSON syntax and retry.", "%s: %v", path, err))
-		default:
-			return fail(e, api.Newf("E_INPUT_INVALID",
-				"Check that this is an unmodified results.json from a supported BetterBench version (0.2.3 or later).",
-				"%s %v", path, err))
-		}
+	if len(positional) != 0 {
+		return fail(e, api.Newf("E_USAGE", "Run `L80 betterbench --help`.", "unexpected argument %q", positional[0]))
 	}
 
-	opt := betterbench.Options{Title: *title, Subtitle: *subtitle, Summary: *summary, Engine: *engine, Hardware: *hardware}
+	prose := betterbench.Prose{Title: *title, Summary: *summary}
 	for _, s := range sections {
 		heading, body, ok := strings.Cut(s, "=")
 		if !ok {
-			return fail(e, api.Newf("E_USAGE",
-				"Write each section as --section \"Heading=Body text\".",
-				"--section %q has no '='", s))
+			return fail(e, api.Newf("E_USAGE", "Write each section as --section \"Heading=Body text\".", "--section %q has no '='", s))
 		}
-		opt.Sections = append(opt.Sections, betterbench.Section{Heading: strings.TrimSpace(heading), Body: strings.TrimSpace(body)})
+		prose.Sections = append(prose.Sections, betterbench.Section{Heading: strings.TrimSpace(heading), Body: strings.TrimSpace(body)})
 	}
 
-	payload, err := betterbench.Build(results, opt)
-	if err != nil {
-		var ie *betterbench.InputError
-		if errors.As(err, &ie) {
-			return fail(e, api.Newf("E_INPUT_INVALID", "Shorten that flag's text and retry.", "%s", ie.Msg))
+	// --- obtain the results file ------------------------------------------
+	var data []byte
+	resultsPath := *results
+	switch {
+	case *results != "" && *endpoint != "":
+		return fail(e, api.Newf("E_USAGE", "Use --results to publish a file, or --endpoint/--model to run a benchmark, not both.",
+			"--results and --endpoint were both given"))
+	case *results != "":
+		var err error
+		data, err = os.ReadFile(*results)
+		if err != nil {
+			return fail(e, api.Newf("E_INPUT_INVALID", "Check the path. It should be the results.json that `betterbench run --out` wrote.",
+				"could not read %s: %v", *results, err))
 		}
-		return fail(e, api.Newf("E_INTERNAL", "Retry once.", "could not build payload: %v", err))
+	case *endpoint == "" || *model == "":
+		return fail(e, api.Newf("E_USAGE",
+			"Run a benchmark with `L80 betterbench --endpoint http://host:8080/v1 --model <name>`, or publish a file with `L80 betterbench --results results.json`.",
+			"--endpoint and --model are required to run a benchmark"))
+	default:
+		runner, err := betterbench.ResolveRunner()
+		if err != nil {
+			return fail(e, api.Newf("E_INPUT_INVALID",
+				"Install uv (https://docs.astral.sh/uv/) so L80 can bootstrap BetterBench, or install BetterBench itself "+
+					"(`pip install git+https://github.com/GGZ14/BetterBench`) so `betterbench` is on PATH. "+
+					"L80_BETTERBENCH=/path/to/betterbench also works.",
+				"%v", err))
+		}
+		resultsPath = *out
+		if resultsPath == "" {
+			resultsPath = defaultResultsPath(*model, time.Now())
+		}
+		if abs, err := filepath.Abs(resultsPath); err == nil {
+			resultsPath = abs
+		}
+		opts := betterbench.RunOptions{
+			Endpoint: *endpoint, Model: *model, Out: resultsPath, Quick: *quick,
+			Passes: *passes, Warmup: *warmup, Notes: notes, Phases: phases.list,
+			NoPrefill: *noPrefill, NoConcurrency: *noConcurrency, Extra: extra,
+		}
+		output.Detailf(e.stderr, "running BetterBench via %s", runner.Source)
+		output.Detailf(e.stderr, "%s", strings.Join(append(append([]string{}, runner.Argv...), opts.Args()...), " "))
+
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+		data, err = betterbench.Execute(ctx, runner, opts, e.stderr, e.stderr)
+		stop()
+		if err != nil {
+			return fail(e, api.Newf("E_INPUT_INVALID",
+				fmt.Sprintf("Fix what BetterBench reported above and retry. A partial results file, if any, is at %s.", resultsPath),
+				"benchmark did not complete: %v", err))
+		}
+		output.Successf(e.stderr, "results written to %s", resultsPath)
 	}
 
-	body, err := json.MarshalIndent(payload, "", "  ")
-	if err != nil {
-		return fail(e, api.Newf("E_INTERNAL", "Retry once.", "could not encode payload: %v", err))
+	// --- build the payload --------------------------------------------------
+	var body []byte
+	switch *tmpl {
+	case betterbench.RawTemplateID:
+		var err error
+		body, err = betterbench.PrepareRaw(data, prose)
+		if err != nil {
+			return failPrepare(e, resultsPath, err)
+		}
+	case betterbench.TemplateID:
+		parsed, err := betterbench.Parse(data)
+		if err != nil {
+			return failPrepare(e, resultsPath, err)
+		}
+		opt := betterbench.Options{Title: *title, Summary: *summary, Engine: *engine, Hardware: *hardware, Sections: prose.Sections}
+		payload, err := betterbench.Build(parsed, opt)
+		if err != nil {
+			return failPrepare(e, resultsPath, err)
+		}
+		body, err = json.Marshal(payload)
+		if err != nil {
+			return fail(e, api.Newf("E_INTERNAL", "Retry once.", "could not encode payload: %v", err))
+		}
+	default:
+		return fail(e, api.Newf("E_TEMPLATE_UNKNOWN",
+			fmt.Sprintf("Use --template %s (the results file as written) or %s (the summary mapping).", betterbench.RawTemplateID, betterbench.TemplateID),
+			"%q is not a template this command can produce", *tmpl))
 	}
-	body = append(body, '\n')
-	compactSize := len(mustCompact(body))
-	if compactSize > api.MaxPayloadBytes {
-		// Cannot happen for a schema-shaped payload, but say so rather than
-		// hand the user a file that publish will refuse.
+	limit := api.MaxPayloadBytesFor(*tmpl)
+	if len(body) > limit {
 		return fail(e, api.Newf("E_PAYLOAD_TOO_LARGE",
-			"Drop --section text or shorten --summary.",
-			"mapped payload is %d bytes; the limit is %d", compactSize, api.MaxPayloadBytes))
+			"Re-run with fewer passes or categories, or publish with --template bench.report.v1 for a summary.",
+			"payload is %d bytes; the limit for %s is %d", len(body), *tmpl, limit))
 	}
 
-	dest := *out
-	if dest == "" {
-		dest = defaultPayloadPath(path)
+	if *payloadOut != "" {
+		if err := os.WriteFile(*payloadOut, append(append([]byte{}, body...), '\n'), 0o644); err != nil {
+			return fail(e, api.Newf("E_INPUT_INVALID", "Pass --payload-out with a writable path.", "could not write %s: %v", *payloadOut, err))
+		}
+		output.Detailf(e.stderr, "payload written to %s", *payloadOut)
 	}
-	if dest == "-" {
-		if *publish {
-			return fail(e, api.Newf("E_USAGE", "Write to a file to publish it: drop `--out -`.",
-				"--publish cannot be combined with --out -"))
+
+	if *dryRun {
+		if *asJSON {
+			return emitJSON(e, map[string]any{
+				"dry_run": true, "template": *tmpl, "byte_size": len(body), "results": resultsPath,
+			})
 		}
-		if _, err := e.stdout.Write(body); err != nil {
-			return api.ExitInternal
-		}
+		output.Successf(e.stdout, "dry run: would publish %s as %s (%d bytes)", resultsPath, *tmpl, len(body))
 		return api.ExitOK
 	}
-	if err := os.WriteFile(dest, body, 0o644); err != nil {
-		return fail(e, api.Newf("E_INPUT_INVALID", "Pass --out with a writable path.", "could not write %s: %v", dest, err))
-	}
 
-	if *publish {
-		pubArgs := []string{dest, "--template", betterbench.TemplateID}
-		if *asJSON {
-			pubArgs = append(pubArgs, "--json")
-		}
-		if *apiBase != "" {
-			pubArgs = append(pubArgs, "--api-base", *apiBase)
-		}
-		output.Detailf(e.stderr, "wrote %s (%d bytes); publishing", dest, compactSize)
-		return runPublish(e, pubArgs)
-	}
-
-	if *asJSON {
-		return emitJSON(e, map[string]any{
-			"path": dest, "template": betterbench.TemplateID, "byte_size": compactSize,
-			"title": payload.Title, "categories": len(payload.Categories),
-			"concurrency_levels": len(payload.Concurrency), "prefill_depths": len(payload.Prefill),
-			"caveats": payload.Caveats,
-		})
-	}
-	output.Successf(e.stdout, "wrote %s", dest)
-	output.Detailf(e.stdout, "%s · %d bytes · %d categories, %d concurrency levels, %d prefill depths",
-		betterbench.TemplateID, compactSize, len(payload.Categories), len(payload.Concurrency), len(payload.Prefill))
-	output.Detailf(e.stdout, "title: %s", payload.Title)
-	for _, c := range payload.Caveats {
-		output.Detailf(e.stdout, "caveat: %s", c)
-	}
-	output.Detailf(e.stdout, "review the file, then: L80 publish %s", dest)
-	return api.ExitOK
+	return publishBody(e, body, *tmpl, resultsPath, *apiBase, *asJSON)
 }
 
-func mustCompact(b []byte) []byte {
-	c, err := compact(b)
-	if err != nil {
-		return b
+func failPrepare(e env, path string, err error) int {
+	var ie *betterbench.InputError
+	switch {
+	case errors.Is(err, betterbench.ErrAlreadyPayload):
+		return fail(e, api.Newf("E_INPUT_INVALID",
+			fmt.Sprintf("This file is already a template payload. Publish it directly: `L80 publish %s`.", path), "%s is %v", path, err))
+	case errors.Is(err, betterbench.ErrSyntax):
+		return fail(e, api.Newf("E_JSON_INVALID", "Fix the JSON syntax and retry.", "%s: %v", path, err))
+	case errors.Is(err, betterbench.ErrNotBetterBench):
+		return fail(e, api.Newf("E_INPUT_INVALID", "Pass the results.json written by `betterbench run --out`.", "%s is %v", path, err))
+	case errors.As(err, &ie):
+		return fail(e, api.Newf("E_INPUT_INVALID", "Shorten that flag's text and retry.", "%s", ie.Msg))
+	default:
+		return fail(e, api.Newf("E_INPUT_INVALID",
+			"Check that this is an unmodified results.json from a supported BetterBench version (0.2.3 or later).", "%s %v", path, err))
 	}
-	return c
+}
+
+func indexOf(list []string, s string) int {
+	for i, v := range list {
+		if v == s {
+			return i
+		}
+	}
+	return -1
+}
+
+func betterbenchUsage(e env) {
+	fmt.Fprint(e.stderr, `Usage:
+  L80 betterbench --endpoint <url> --model <name> [run flags] [-- <betterbench run flags>]
+  L80 betterbench --results <results.json> [publish flags]
+
+Runs BetterBench (https://github.com/GGZ14/BetterBench) against an OpenAI-compatible
+endpoint and publishes the results.json it writes, as written, to launch80 — minus
+env.endpoint and env.host, which never leave this machine. Or publishes a results.json
+you already have.
+
+Run flags:
+  --quick                 short smoke run; the page will say so
+  --passes N, --warmup N  passes per category
+  --note KEY=VALUE        recorded in the run, shown as a chip (repeatable); engine=... names the stack
+  --decode --prefill --concurrency, --no-prefill --no-concurrency   phase selection
+  --out <path>            where results.json goes (default ./betterbench-<model>-<time>.json)
+  BetterBench must be on PATH, or uvx installed so L80 can bootstrap it. L80_BETTERBENCH overrides.
+
+Publish flags:
+  --title, --summary, --section "Heading=Body"   prose shown on the page
+  --template bench.betterbench.v1 (default) | bench.report.v1 (summary mapping; --engine/--hardware apply)
+  --dry-run               prepare but do not publish;  --payload-out <path> saves the exact payload
+  --json, --api-base      as for L80 publish
+`)
 }

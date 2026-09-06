@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"github.com/launch80/L80-Skills/internal/api"
+	"github.com/launch80/L80-Skills/internal/betterbench"
 	"github.com/launch80/L80-Skills/internal/config"
 	"github.com/launch80/L80-Skills/internal/output"
 )
@@ -22,6 +23,14 @@ var harnessDumpKeys = []string{"betterbench_version", "env", "sample_gate", "res
 
 // templateRequiredKeys are required by every template; a mapped payload has them.
 var templateRequiredKeys = []string{"title", "summary"}
+
+func declaresRawTemplate(fields map[string]json.RawMessage) bool {
+	var s string
+	if raw, ok := fields["$template"]; ok {
+		_ = json.Unmarshal(raw, &s)
+	}
+	return s == betterbench.RawTemplateID
+}
 
 func looksLikeHarnessDump(fields map[string]json.RawMessage) bool {
 	for _, k := range templateRequiredKeys {
@@ -75,7 +84,9 @@ func resolveTemplate(data []byte, flagValue, path string) (string, []byte, *api.
 			"%s is not valid JSON: %v", path, err)
 	}
 
-	if looksLikeHarnessDump(fields) {
+	// bench.betterbench.v1 IS harness output by design; the check below is for
+	// the templates that take a mapped payload.
+	if flagValue != betterbench.RawTemplateID && !declaresRawTemplate(fields) && looksLikeHarnessDump(fields) {
 		return "", nil, api.Newf("E_INPUT_NOT_TEMPLATE",
 			"Run `L80 betterbench <results.json>` to map it into a bench.report.v1 payload, then publish "+
 				"the file it writes (or add --publish to do both). Never pass results.json itself.",
@@ -166,13 +177,28 @@ func runPublish(e env, args []string) int {
 		return fail(e, tmplErr)
 	}
 
+	// A results file published straight through `L80 publish` gets the same
+	// privacy treatment `L80 betterbench` applies: the endpoint URL and
+	// hostname the harness recorded never leave the machine. The server would
+	// refuse them anyway; stripping here means the user never has to.
+	if template == betterbench.RawTemplateID {
+		stripped, err := betterbench.PrepareRaw(body, betterbench.Prose{})
+		if err != nil {
+			return fail(e, api.Newf("E_INPUT_INVALID",
+				"Pass the results.json written by `betterbench run --out`, or use `L80 betterbench --results <file>`.",
+				"%s: %v", path, err))
+		}
+		body = stripped
+	}
+
 	// Checked after resolution: injecting the id makes the body longer, and
 	// compaction makes it shorter. Measured on exactly the bytes that are sent.
-	if len(body) > api.MaxPayloadBytes {
+	limit := api.MaxPayloadBytesFor(template)
+	if len(body) > limit {
 		return fail(e, api.Newf("E_PAYLOAD_TOO_LARGE",
 			"Shorten the sections and retry. A file far over the limit is usually not a template "+
-				"payload at all but raw harness output; run `L80 betterbench <results.json>` instead.",
-			"%s is %d bytes after removing whitespace; the limit is %d", path, len(body), api.MaxPayloadBytes))
+				"payload at all but raw harness output; run `L80 betterbench --results <results.json>` instead.",
+			"%s is %d bytes after removing whitespace; the limit for %s is %d", path, len(body), template, limit))
 	}
 
 	if *dryRun {
@@ -186,13 +212,19 @@ func runPublish(e env, args []string) int {
 		return api.ExitOK
 	}
 
-	cfg := config.Load(*apiBase)
+	return publishBody(e, body, template, path, *apiBase, *asJSON)
+}
+
+// publishBody sends an already-validated body and reports the result. Shared
+// by `publish` and `betterbench` so the two print the same thing.
+func publishBody(e env, body []byte, template, path, apiBase string, asJSON bool) int {
+	cfg := config.Load(apiBase)
 	artifact, apiErr := newClient(cfg).Publish(body)
 	if apiErr != nil {
 		return fail(e, apiErr)
 	}
 
-	if *asJSON {
+	if asJSON {
 		return emitJSON(e, artifact)
 	}
 
@@ -200,6 +232,7 @@ func runPublish(e env, args []string) int {
 	output.Successf(e.stdout, "published: %s", artifact.URL)
 	output.Detailf(e.stdout, "template %s v%d · %s · %d bytes",
 		artifact.TemplateID, artifact.TemplateVersion, artifact.TrustTier, artifact.ByteSize)
+	_ = path
 	return api.ExitOK
 }
 

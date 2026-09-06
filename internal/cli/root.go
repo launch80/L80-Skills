@@ -81,8 +81,9 @@ func usage(w io.Writer) {
 Usage:
   L80 publish <file.json> [--template <id>]      Publish a payload, print the URL
                           [--json] [--dry-run]
-  L80 betterbench <results.json> [--publish]     Map a BetterBench results.json to a
-                  [--out <file>] [--title ...]   bench.report.v1 payload (see --help)
+  L80 betterbench --endpoint <url> --model <m>   Run BetterBench and publish the results
+                  [--quick] [--note k=v] ...     file as written (see --help)
+  L80 betterbench --results <results.json>       Publish an existing results.json
   L80 templates list [--json]                    List available templates
   L80 skills print [name]                        Print a bundled SKILL.md
   L80 skills link --target claude-code [--dev]   Install a skill for an agent

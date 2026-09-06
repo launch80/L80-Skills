@@ -25,10 +25,12 @@ If you do both they must agree, or the command fails with
 
 ## Which template
 
-**`bench.report.v1` — an inference benchmark run.** Use this whenever the source
-is a **BetterBench** `results.json`, or any measurement with per-category
-percentiles. This template is shaped around BetterBench's output and is the one
-that renders it correctly.
+**`bench.betterbench.v1` — a BetterBench run or its `results.json`.** Produced
+only by `L80 betterbench`, which runs the benchmark and publishes the file as
+written. Use it whenever BetterBench is involved.
+
+**`bench.report.v1` — any other per-category percentile benchmark.** Hand-written
+summary shape: tables, p50/p99, sample-gate flags.
 
 **`generic.report.v1` — everything else.** Title, summary, a flat metric
 list, and prose sections. Use it for status updates, test results, findings, and
@@ -38,27 +40,41 @@ Choosing `generic.report.v1` for a BetterBench run is the single most common
 mistake. It has no table, so p50/p99/1%-low collapse into unrelated flat metrics
 and the distribution — the entire point of the measurement — is lost.
 
-## bench.report.v1
+## BetterBench runs: `L80 betterbench`
 
-**Use `L80 betterbench` to do the mapping. Do not hand-write it.**
+**For anything BetterBench, use `L80 betterbench`. Do not map the file by hand.**
 
 ```sh
-L80 betterbench results.json                       # -> results.l80.json, then review
-L80 publish results.l80.json
-# or, in one step:
-L80 betterbench results.json --publish
+# Run the benchmark and publish the results file as written (template bench.betterbench.v1):
+L80 betterbench --endpoint http://host:8080/v1 --model <name> [--quick] [--note engine=vLLM 0.9.3]
+# Publish a results.json that already exists:
+L80 betterbench --results results.json
 ```
 
-The command ports BetterBench's own statistics, applies its sample gate, keeps
-per-token ITL only where the server streamed one token per update, fills
-`caveats` (quick mode, under-sampled percentiles, truncation, failed requests,
-skipped prefill depths), and never copies the endpoint or hostname. Add
-`--title`, `--summary`, `--engine`, `--hardware`, or `--section "Heading=Body"`
-when the user wants something the file cannot know; every default is derived
-from the file. Read the caveats it prints and repeat them to the user.
+What it does: runs `betterbench run` (found on PATH, or bootstrapped with `uvx`
+from GitHub, or `L80_BETTERBENCH=/path/to/betterbench`), streams its output,
+keeps `results.json` in the working directory, removes `env.endpoint` and
+`env.host` (they never leave the machine), and publishes the file itself. The
+server derives every table and figure from the raw samples with a port of
+BetterBench's own report code, so the page matches the HTML report the tool
+writes beside the file. Add `--title`, `--summary`, or `--section "Heading=Body"`
+for prose; add `--dry-run --payload-out p.json` to inspect the exact payload
+first. Flags after `--` go to `betterbench run` verbatim.
 
-Write a payload by hand only when the source is not a BetterBench file. In
-that case the mapping is:
+Before running: ask for the endpoint and model if not given, and tell the user
+a full run takes a while (20 passes per category plus sweeps); `--quick` is a
+5-pass smoke run and the page says so. After publishing, hand the user the
+URL and repeat any caveats the page will show (quick mode, under-sampled
+percentiles, truncated runs).
+
+`--template bench.report.v1` instead produces the summary mapping below from
+the same file, for when only the summary shape is wanted.
+
+## bench.report.v1
+
+Map a BetterBench `results.json` like this only if `L80 betterbench` cannot be
+used. Otherwise this section is the reference for hand-written payloads from
+other harnesses with per-category percentiles:
 
 | BetterBench | payload |
 |---|---|
@@ -73,7 +89,8 @@ that case the mapping is:
 **Publish the mapped payload, never `results.json` itself.** The raw harness
 output is not a template payload: it fails the schema, and it is usually far
 over the 64 KB limit, so `E_PAYLOAD_TOO_LARGE` or `E_INPUT_NOT_TEMPLATE` on a
-file you did not write is the sign `L80 betterbench` was skipped.
+file you did not write is the sign `L80 betterbench` was skipped. (With
+`L80 betterbench` or `--template bench.betterbench.v1` the raw file is right.)
 
 ```json
 {
@@ -171,8 +188,7 @@ Read the `error:` code and the `remedy:` line, then act on them.
   **Never** ask the user to paste a token into the conversation.
 - `E_RATE_LIMITED` / `E_QUOTA_EXCEEDED` — wait for the stated time. Do not retry in a loop.
 - `E_INPUT_NOT_TEMPLATE` — the file is raw harness output (e.g. a BetterBench
-  `results.json`), not a mapped payload. Run `L80 betterbench <file>` and publish
-  the file it writes.
+  `results.json`) given to a summary template. Run `L80 betterbench --results <file>`.
 - `E_PAYLOAD_TOO_LARGE` — a valid payload never exceeds the limit by much, so first
   confirm the file is a mapped payload and not harness output. If it is, shorten
   the sections and retry.

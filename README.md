@@ -36,29 +36,26 @@ L80 skills link --target claude-code --dev \
 
 ## Publishing a BetterBench run
 
-`L80 betterbench` turns the `results.json` that `betterbench run --out` writes
-into a `bench.report.v1` payload, using the same statistics as BetterBench's
-own report (numpy-style percentiles, the n·tail ≥ 5 sample gate, per-token ITL
-only when the server streamed one token per update). Nothing is invented: a
-figure the file does not carry is left out and its column disappears.
+`L80 betterbench` runs [BetterBench](https://github.com/GGZ14/BetterBench)
+against an OpenAI-compatible endpoint and publishes the `results.json` it
+writes, as written, to the `bench.betterbench.v1` template. The server derives
+every table and figure from the raw samples with a port of BetterBench's own
+report code, so the page shows what the local HTML report shows.
 
 ```sh
-L80 betterbench results.json                   # writes results.l80.json beside it
-L80 betterbench results.json --publish         # write it and publish in one step
-L80 betterbench results.json --title "Qwen3-8B on vLLM 0.9.3, single 4090" \
-    --engine "vLLM 0.9.3" --hardware "RTX 4090 24GB" \
-    --section "Setup=Plain text about the box."
+L80 betterbench --endpoint http://host:8080/v1 --model Qwen3-8B --note engine="vLLM 0.9.3"
+L80 betterbench --endpoint http://host:8080/v1 --model Qwen3-8B --quick        # 5-pass smoke run
+L80 betterbench --results results.json                                        # publish an existing file
+L80 betterbench --results results.json --dry-run --payload-out payload.json   # inspect first
+L80 betterbench --results results.json --template bench.report.v1             # summary mapping instead
 ```
 
-Defaults come from the file: the model from `env.model`, the engine from an
-`engine`/`server`/`image` `--note`, the hardware from `nvidia-smi`/`rocm-smi`
-output, the title from those two, and a summary from the measured figures.
-Remaining `--note` entries become chips. The endpoint URL and hostname are
-never copied. Sample-size shortfalls, truncated runs, failed requests, skipped
-prefill depths, and `--quick` runs are written into `caveats` automatically.
-
-Never pass `results.json` to `L80 publish` directly; it is not a template
-payload and is usually several times the 64 KB limit.
+BetterBench is found on PATH, or bootstrapped with `uvx` from GitHub when
+`uv` is installed; `L80_BETTERBENCH=/path/to/betterbench` overrides both.
+`results.json` is kept in the working directory (`--out` to choose). Two
+fields never leave the machine: `env.endpoint` and `env.host`; the server
+refuses a file that still carries them. Flags after `--` are passed to
+`betterbench run` untouched.
 
 ## Update
 
@@ -92,8 +89,8 @@ fragment. Do not paste a token into a chat.
 ```
 L80 publish <file.json> [--template <id>]      Publish a payload, print the URL
             [--json] [--dry-run]
-L80 betterbench <results.json> [--publish]     Map a BetterBench results.json to a
-            [--out <file>] [--title ...]       bench.report.v1 payload
+L80 betterbench --endpoint <url> --model <m>   Run BetterBench, publish results as written
+L80 betterbench --results <results.json>       Publish an existing results.json
 L80 templates list [--json]                    List available templates
 L80 skills print [name]                        Print a bundled SKILL.md
 L80 skills link --target claude-code [--dev]   Install a skill for an agent
